@@ -6,6 +6,7 @@
 #define Cin 16
 #define K 3
 
+/*
 void Load_In(float* In_ddr, float In[4][Rin][Cin], bool exe){
 	if(!exe)
 		return;
@@ -19,7 +20,19 @@ void Load_In(float* In_ddr, float In[4][Rin][Cin], bool exe){
 	}
 	return;
 }
-
+*/
+void Load_In(float* In_ddr, float In[4][Rin][Cin]){
+	for(int L_ri=0;L_ri<Rin;L_ri++){
+#pragma HLS PIPELINE
+		for(int L_ci=0;L_ci<Cin;L_ci++){
+			for(int L_chi=0;L_chi<4;L_chi++){
+				In[L_chi][L_ri][L_ci]=*In_ddr++;
+			}
+		}
+	}
+	return;
+}
+/*
 void Load_W(float* W_ddr, float W[4][4][K][K], bool exe){
 	if(!exe)
 		return;
@@ -35,9 +48,50 @@ void Load_W(float* W_ddr, float W[4][4][K][K], bool exe){
 	}
 	return;
 }
+*/
+
+void Load_W(float* W_ddr, float W[4][4][K][K]){
+	for(int L_cho=0;L_cho<4;L_cho++){
+#pragma HLS PIPELINE
+		for(int L_chi=0;L_chi<4;L_chi++){
+			for(int L_kr=0;L_kr<K;L_kr++){
+				for(int L_kc=0;L_kc<K;L_kc++){
+					W[L_cho][L_chi][L_kr][L_kc] = *W_ddr++;
+				}
+			}
+		}
+	}
+	return;
+}
+/*
 void Convolution(float In[4][Rin][Cin],float W[4][4][K][K],float Out[4][R][C],bool exe){
 	if(!exe)
 		return;
+	Kernel_Row:
+	for(int kr=0;kr<K;kr++){
+		Kernel_Column:
+		for(int kc=0;kc<K;kc++){
+			Row:
+			for(int r=0;r<R;r++){
+				Column:
+				for(int c=0;c<C;c++){
+#pragma HLS PIPELINE
+					Output_Channel:
+					for(int cho=0;cho<CHout;cho++){
+						Input_Channel:
+						for(int chi=0; chi<CHin;chi++){
+							Out[cho][r][c]+=In[chi][r+kr][c+kc]*W[cho][chi][kr][kc];
+						}
+					}
+				}
+			}
+		}
+	}
+	return;
+}
+*/
+
+void Convolution(float In[4][Rin][Cin],float W[4][4][K][K],float Out[4][R][C]){
 	Kernel_Row:
 	for(int kr=0;kr<K;kr++){
 		Kernel_Column:
@@ -73,6 +127,7 @@ void Offload_Out(float* Out_ddr, float Out[4][R][C]){
 	return;
 }
 
+/*
 void Process(float* In_ddr, float* W_ddr,
 			float In_0[4][Rin][Cin],float W_0[4][4][K][K],
 			float In_1[4][Rin][Cin],float W_1[4][4][K][K],
@@ -89,11 +144,23 @@ void Process(float* In_ddr, float* W_ddr,
 	}
 	return;
 }
+*/
+void Process(float* In_ddr, float* W_ddr,
+			float In[4][Rin][Cin],float W[4][4][K][K],
+			float Out[4][R][C]){
+#pragma HLS_DATAFLOW //自动以double buffer形式组织
+	Load_In(In_ddr,In);
+	Load_W(W_ddr,W);
+	Convolution(In,W,Out);
+	return;
+}
 
+/*
 void test(float *In_ddr, float* W_ddr, float* Out_ddr){
 #pragma HLS INTERFACE m_axi depth=32 port=In_ddr
 #pragma HLS INTERFACE m_axi depth=32 port=W_ddr
 #pragma HLS INTERFACE m_axi depth=32 port=Out_ddr
+
 	static float In_0[4][Rin][Cin];
 #pragma HLS array_partition variable=In_0 complete dim=1
 	static float In_1[4][Rin][Cin];
@@ -114,6 +181,33 @@ void test(float *In_ddr, float* W_ddr, float* Out_ddr){
 		for(int chi=0;chi<CHin;chi+=4){
 			Process(In_ddr,W_ddr,In_0,W_0,In_1,W_1,Out,flag,chi<CHin/4,chi>0);
 			flag=1-flag;
+		}
+		Offload_Out(Out_ddr,Out);
+	}
+	return;
+}
+*/
+
+void test(float *In_ddr, float* W_ddr, float* Out_ddr){
+#pragma HLS INTERFACE m_axi depth=32 port=In_ddr
+#pragma HLS INTERFACE m_axi depth=32 port=W_ddr
+#pragma HLS INTERFACE m_axi depth=32 port=Out_ddr
+
+	static float In[4][Rin][Cin];
+#pragma HLS array_partition variable=In complete dim=1
+
+	static float Out[4][R][C];
+#pragma HLS array_partition variable=Out complete dim=1
+
+	static float W[4][4][K][K]
+#pragma HLS array_partition variable=W complete dim=1
+#pragma HLS array_partition variable=W complete dim=2
+
+	Output_Channel_Tiling:
+	for(int cho=0;cho<CHout;cho+=4){ //每次自增一块（4）
+		Input_Channel_Tiling:
+		for(int chi=0;chi<CHin;chi+=4){
+			Process(In_ddr,W_ddr,In,W, Out);
 		}
 		Offload_Out(Out_ddr,Out);
 	}
